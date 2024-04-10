@@ -73,7 +73,7 @@ void snap_file_make(DIR *dir_entry, const char *dir_name, const char *dir_output
     int snapshot_file = open(file_name, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // Creare fișier, chiar dacă acesta nu există deja
 
     if (snapshot_file == -1) {
-        perror("Eroare deschidere fisier:");
+        perror("Eroare deschidere fisier snapshot:");
     } else {
         // Apelăm funcția listDirectoryRecursively pentru a face snapshot-uri
         listDirectoryRecursively(dir_entry, dir_name, snapshot_file);
