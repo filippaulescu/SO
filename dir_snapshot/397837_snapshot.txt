@@ -1,0 +1,1 @@
+d3/file1.txt: inode number: 398231, size: 10, last access time: 1714830766, permissions: 664

@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <dirent.h>
-
+#include <sys/wait.h>
 
 void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot) {
     struct dirent *entry;
@@ -24,7 +24,24 @@ void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot) {
         // Obținem informații despre intrarea curentă
         struct stat fileStat;
         if (lstat(fullPath, &fileStat) < 0) {
-            perror("eroare in lstat");
+            perror("Eroare in lstat");
+            continue;
+        }
+
+         // Verificăm dacă intrarea este un director
+        if (S_ISDIR(fileStat.st_mode)) {
+            // Deschidem subdirectorul
+            DIR *subdir = opendir(fullPath);
+            if (subdir == NULL) {
+                perror("Eroare in opendir");
+                continue;
+            }
+
+            // Apelăm recursiv listDirectoryRecursively pentru subdirector
+            listDirectoryRecursively(subdir, fullPath, snapshot);
+
+            // Închidem subdirectorul
+            closedir(subdir);
             continue;
         }
 
@@ -37,7 +54,7 @@ void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot) {
                         (long)fileStat.st_ino, (long)fileStat.st_size, (long)fileStat.st_atime, (unsigned int)fileStat.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO));
 
         if (len < 0 || len >= sizeof(buffer)) {
-            fprintf(stderr, "eroare in sprintf; incercam sa introducem pea multe date\n");
+            fprintf(stderr, "Eroare in sprintf; incercam sa introducem pea multe date\n");
             exit(EXIT_FAILURE);
         }
 
@@ -47,42 +64,51 @@ void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot) {
             exit(EXIT_FAILURE);
         }
 
-        // Verificăm dacă intrarea este un director
-        if (S_ISDIR(fileStat.st_mode)) {
-            // Deschidem subdirectorul
-            DIR *subdir = opendir(fullPath);
-            if (subdir == NULL) {
-                perror("eroare in opendir");
-                continue;
-            }
 
-            // Apelăm recursiv listDirectoryRecursively pentru subdirector
-            listDirectoryRecursively(subdir, fullPath, snapshot);
-
-            // Închidem subdirectorul
-            closedir(subdir);
-        }
     }
 }
 
-void snap_file_make(DIR *dir_entry, const char *dir_name, const char *dir_output) {
+void createSnapshot(DIR *dir_entry, const char *dir_name, const char *dir_output, int is_aux) {
+    struct stat dir_stat;
+    if (lstat(dir_name, &dir_stat) != 0) {
+        perror("Erare in lstat");
+        exit(EXIT_FAILURE);
+    }
     char file_name[1024];
-
-    sprintf(file_name, "%s/%s_snapshot.file.txt", dir_output, dir_name); // Numele fișierului pentru snapshot-ul curent
-
-    int snapshot_file = open(file_name, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // Creare fișier, chiar dacă acesta nu există deja
+    sprintf(file_name, "%s/%ld_snapshot%s.txt", dir_output, (long)dir_stat.st_ino, is_aux ? "_aux" : "");
+     int snapshot_file = open(file_name, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // Creare fișier, chiar dacă acesta nu există deja
 
     if (snapshot_file == -1) {
-        perror("Eroare deschidere fisier snapshot:");
-    } else {
-        // Apelăm funcția listDirectoryRecursively pentru a face snapshot-uri
-        listDirectoryRecursively(dir_entry, dir_name, snapshot_file);
-
-        if (close(snapshot_file) == -1) {
-            perror("Eroare inchidere fisier snapshot:");
-        } // Închidem fișierul pentru snapshot
+        perror("Eroare deschidere snapshot");
+        exit(EXIT_FAILURE);
+    }
+    // Apelăm funcția listDirectoryRecursively pentru a face snapshot-uri
+    listDirectoryRecursively(dir_entry, dir_name, snapshot_file);
+    // Închidem fișierul pentru snapshot
+    if (close(snapshot_file) == -1) {
+        perror("Eroare inchidere snapshot");
     }
 }
+
+int compareAndClean(const char *old_file, const char *new_file) {
+    char cmd[2048]; // auxiliar pentru crearea de comenzi. acestea se vor rula prim system(cmd) ca si comenzi in schell
+    //diff - comanda ce verifica daca doua fisiere sunt diferite. /dev/null este o optiune care permite sa ignori " locul unde s-au gasit modificari" si sa primesti doar rezultatul comenzii diff
+    snprintf(cmd, sizeof(cmd), "diff %s %s > /dev/null", old_file, new_file);
+    int diff = system(cmd);
+    if (diff != 0) { // files are different
+        //cp -copiaza continutul din primul fisier in al doilea fisier
+        snprintf(cmd, sizeof(cmd), "cp %s %s", new_file, old_file);
+        system(cmd);
+        printf("Snapshot updated.\n");
+    } else {
+        printf("No changes detected.\n");
+    }
+    //rm - sterge fisierul dat ca parametru
+    snprintf(cmd, sizeof(cmd), "rm %s", new_file);
+    system(cmd);
+    return diff;
+}
+
 
 
 int main(int argc, char** argv) {
@@ -110,6 +136,7 @@ int main(int argc, char** argv) {
     }
 
     struct stat buf;
+    pid_t pid;
 
     // Parcurgem directoarele pentru care facem snapshot-uri
     for (int i = 1; i < argc; i ++) {
@@ -120,22 +147,50 @@ int main(int argc, char** argv) {
 
         // Verificăm dacă argumentul dat este un director
         if (lstat(argv[i], &buf) == 0 && S_ISDIR(buf.st_mode)) {
-            DIR *dir_entry;
 
+            pid = fork();
 
-            // Deschidere directorul curent
-            if ((dir_entry = opendir(argv[i])) == NULL) {
-                perror("Eroare deschidere director:");
-                continue;
+            if (pid < 0) {
+                perror("proces nereusit : ");
             }
+            else if (pid == 0) {
+                //cod fiu
 
-            snap_file_make(dir_entry, argv[i], argv[poz_dir_output]);
+                DIR *dir_entry;
+                //printf("%d %s\n", getpid(), argv[i]);
 
-            if (closedir(dir_entry) == -1) {
-                perror("Eroare inchidere director:");
-            } // Închidere directorul curent
+                // Deschidere directorul curent
+                if ((dir_entry = opendir(argv[i])) == NULL) {
+                    perror("Eroare deschidere director:");
+                    continue;
+                }
+
+
+
+
+                createSnapshot(dir_entry, argv[i], argv[poz_dir_output], 1);
+                char old_snapshot[1024], new_snapshot[1024];
+                sprintf(old_snapshot, "%s/%ld_snapshot.txt", argv[poz_dir_output], (long)buf.st_ino);
+                sprintf(new_snapshot, "%s/%ld_snapshot_aux.txt", argv[poz_dir_output], (long)buf.st_ino);
+                compareAndClean(old_snapshot, new_snapshot);
+
+
+                if (closedir(dir_entry) == -1) {
+                    perror("Eroare inchidere director:");
+                } // Închidere directorul curent
+
+                exit(0);
+            }
         }
     }
 
+    int status;
+    int pid_f;
+
+    for (int  i = 1; i <= argc - 3; i ++) {
+        pid_f = wait(&status);
+        //printf("Child Process %d termineted whit PID %d and a exit code %d\n", i, pid_f, WEXITSTATUS(status));
+    }
     return 0;
 }
+
