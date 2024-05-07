@@ -113,27 +113,42 @@ int compareAndClean(const char *old_file, const char *new_file) {
 
 int main(int argc, char** argv) {
 
-    //Verificare număr argumente
-    if (argc < 4 || argc > 10) {
+    //Verificare număr argumente (10 directoare, 2 pt output si 2 pt izolare
+    if (argc < 4 || argc > 14) {
         fprintf(stderr, "Numar incorect de argumente\n");
         exit(EXIT_FAILURE);
     }
 
     int poz_dir_output = -1;
+    int poz_dir_izolare = -1;
 
-    // Cautăm directorul de ieșire
+
+    // Cautăm directorul de ieșire si pe cel de izolare
     for (int i = 1; i < argc; i ++) {
         if (strcmp(argv[i], "-o") == 0) {
             if (i+1 < argc) {
                 poz_dir_output = ++i;
-                break;
+
             }
             else {
                 fprintf(stderr, "Fara director de iesire\n");
                 exit(EXIT_FAILURE);
             }
         }
+        if (strcmp(argv[i], "-s") == 0) {
+            if (i+1 < argc) {
+                poz_dir_izolare = ++i;
+
+            }
+            else {
+                fprintf(stderr, "Fara director de izolare\n");
+                exit(EXIT_FAILURE);
+            }
     }
+    }
+
+
+
 
     struct stat buf;
     pid_t pid;
@@ -141,7 +156,7 @@ int main(int argc, char** argv) {
     // Parcurgem directoarele pentru care facem snapshot-uri
     for (int i = 1; i < argc; i ++) {
         // Trecem peste directorul de ieșire
-        if (i == poz_dir_output || i == poz_dir_output -1 ) {
+        if (i == poz_dir_output || i == poz_dir_output -1 || i == poz_dir_izolare || i == poz_dir_izolare -1  ) {
             continue;
         }
 
@@ -193,4 +208,3 @@ int main(int argc, char** argv) {
     }
     return 0;
 }
-
