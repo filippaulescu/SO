@@ -9,7 +9,59 @@
 #include <dirent.h>
 #include <sys/wait.h>
 
-void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot) {
+
+int checkPermissions(const char *path) {
+    struct stat fileStat;
+    if (lstat(path, &fileStat) == 0) {
+        // Verifică dacă permisiunile de scriere lipsesc
+        if (!(fileStat.st_mode & (S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH))) {
+            return 1; // Fișierul nu are nicio permisiune setată
+        }
+    } else {
+        perror("Eroare la obținerea informațiilor fișierului");
+        return -1; // Eroare la obținerea informațiilor, nu cred ca o sa o folosesc
+    }
+    return 0; // Fișierul are permisiuni setate
+}
+
+// Funcția pentru mutarea fișierului într-un nou director
+void moveFileToDirectory(const char *sourcePath, const char *destinationDir) {
+
+    char destinationPath[1024];
+    snprintf(destinationPath, sizeof(destinationPath), "%s/%s", destinationDir, strrchr(sourcePath, '/') + 1);
+    if (rename(sourcePath, destinationPath) == -1) {
+        perror("Eroare la mutarea fișierului");
+    } else {
+        printf("Fișierul a fost mutat cu succes la: %s\n", destinationPath);
+    }
+}
+
+void processFile(const char *fullPath,const char *izolarePath) {
+
+    pid_t pid = fork();
+
+    if (pid == -1) {
+        perror("Eroare la fork");
+    } else if (pid == 0) {
+        // Procesul copil
+
+        execl("./verificare_fisier.sh", "verificare_fisier.sh", fullPath, (char *)NULL);
+        perror("Eroare la exec");
+        exit(EXIT_FAILURE);
+    } else {
+        // Procesul părinte așteaptă copilul să termine
+        int status;
+        wait(&status);
+
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
+            moveFileToDirectory(fullPath, izolarePath);
+            printf(" A AJUNS in process!!!\n");
+        }
+    }
+}
+
+
+void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot,const char *izolarePath) {
     struct dirent *entry;
 
     while ((entry = readdir(dir)) != NULL) {
@@ -38,11 +90,16 @@ void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot) {
             }
 
             // Apelăm recursiv listDirectoryRecursively pentru subdirector
-            listDirectoryRecursively(subdir, fullPath, snapshot);
+            listDirectoryRecursively(subdir, fullPath, snapshot, izolarePath);
 
             // Închidem subdirectorul
             closedir(subdir);
             continue;
+        }
+
+        // Dacă fișierul nu are permisiuni, executam scriptul de verificare
+        if (checkPermissions(fullPath) == 1) {
+            processFile(fullPath, izolarePath);
         }
 
         // Construim mesajul pentru snapshot
@@ -68,7 +125,7 @@ void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot) {
     }
 }
 
-void createSnapshot(DIR *dir_entry, const char *dir_name, const char *dir_output, int is_aux) {
+void createSnapshot(DIR *dir_entry, const char *dir_name, const char *dir_output,const char *dir_izolare, int is_aux) {
     struct stat dir_stat;
     if (lstat(dir_name, &dir_stat) != 0) {
         perror("Erare in lstat");
@@ -83,7 +140,7 @@ void createSnapshot(DIR *dir_entry, const char *dir_name, const char *dir_output
         exit(EXIT_FAILURE);
     }
     // Apelăm funcția listDirectoryRecursively pentru a face snapshot-uri
-    listDirectoryRecursively(dir_entry, dir_name, snapshot_file);
+    listDirectoryRecursively(dir_entry, dir_name, snapshot_file, dir_izolare);
     // Închidem fișierul pentru snapshot
     if (close(snapshot_file) == -1) {
         perror("Eroare inchidere snapshot");
@@ -146,6 +203,10 @@ int main(int argc, char** argv) {
             }
     }
     }
+     if( poz_dir_izolare == -1 || poz_dir_output == -1){
+                printf("Argumentele nu sunt conforme. Lipsesc directoarele\n");
+                exit(EXIT_FAILURE);
+        }
 
 
 
@@ -183,7 +244,7 @@ int main(int argc, char** argv) {
 
 
 
-                createSnapshot(dir_entry, argv[i], argv[poz_dir_output], 1);
+                createSnapshot(dir_entry, argv[i], argv[poz_dir_output], argv[poz_dir_izolare], 1);
                 char old_snapshot[1024], new_snapshot[1024];
                 sprintf(old_snapshot, "%s/%ld_snapshot.txt", argv[poz_dir_output], (long)buf.st_ino);
                 sprintf(new_snapshot, "%s/%ld_snapshot_aux.txt", argv[poz_dir_output], (long)buf.st_ino);

@@ -10,7 +10,7 @@ FISIER_VERIFICAT=$1
 
 # Verificare existenta fisier infectat
 if [ ! -f "$FISIER_VERIFICAT" ]; then
-  echo "FISIERUL POSIBIL INFECAT NU EXISTA"
+  echo "FISIERUL POSIBIL INFECTAT NU EXISTA"
   exit -1
 fi
 
@@ -42,8 +42,13 @@ if (( LINII < 3 )) && (( CUVINTE > 1000)) && (( CARACTERE > 2000 )); then
         echo "$FISIER_VERIFICAT."
         exit 1
         #returnez 1 pentru fisier malitios
+        #sterg drepturile pt fisierul verificat
+        chmod 000 $FISIER_VERIFICAT
     fi
 fi
+
+ #sterg drepturile pt fisierul verificat
+    chmod 000 $FISIER_VERIFICAT
 
 #Fisierul este curat
 echo "SAFE"

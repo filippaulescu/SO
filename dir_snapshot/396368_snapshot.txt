@@ -1,4 +1,3 @@
 d1/f1.txt: inode number: 396305, size: 4, last access time: 1714830912, permissions: 664
-d1/d2/f3.txt: inode number: 396300, size: 4, last access time: 1713289255, permissions: 664
 d1/d2/f4.txt: inode number: 396862, size: 4, last access time: 1713289255, permissions: 664
 d1/f2.txt: inode number: 396860, size: 4, last access time: 1713286021, permissions: 664
