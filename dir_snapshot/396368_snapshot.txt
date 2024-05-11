@@ -1,3 +1,6 @@
 d1/f1.txt: inode number: 396305, size: 4, last access time: 1714830912, permissions: 664
 d1/d2/f4.txt: inode number: 396862, size: 4, last access time: 1713289255, permissions: 664
+d1/f3.txt: inode number: 397644, size: 27126, last access time: 1715458629, permissions: 0
+d1/malicious.txt: inode number: 396301, size: 27126, last access time: 1715458629, permissions: 0
+d1/ceva.txt: inode number: 397660, size: 20, last access time: 1715458679, permissions: 0
 d1/f2.txt: inode number: 396860, size: 4, last access time: 1713286021, permissions: 664

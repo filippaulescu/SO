@@ -8,6 +8,8 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <sys/wait.h>
+#include <errno.h>
+
 
 
 int checkPermissions(const char *path) {
@@ -36,7 +38,14 @@ void moveFileToDirectory(const char *sourcePath, const char *destinationDir) {
     }
 }
 
-void processFile(const char *fullPath,const char *izolarePath) {
+int processFile(const char *fullPath,const char *izolarePath) {
+
+
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        perror("Pipe failed");
+        exit(EXIT_FAILURE);
+    }
 
     pid_t pid = fork();
 
@@ -44,24 +53,36 @@ void processFile(const char *fullPath,const char *izolarePath) {
         perror("Eroare la fork");
     } else if (pid == 0) {
         // Procesul copil
+        close(pipefd[0]);
+        dup2(pipefd[1], 1);// 1 e stdout, am facut redirectare aici, stdout scrie  direct in pipe;
+        close(pipefd[1]);
 
         execl("./verificare_fisier.sh", "verificare_fisier.sh", fullPath, (char *)NULL);
         perror("Eroare la exec");
         exit(EXIT_FAILURE);
     } else {
         // Procesul părinte așteaptă copilul să termine
+        close(pipefd[1]);
         int status;
         wait(&status);
 
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
-            moveFileToDirectory(fullPath, izolarePath);
-            printf(" A AJUNS in process!!!\n");
+        if (WIFEXITED(status)) {
+            char buffer[512] = {0};
+            read(pipefd[0], buffer, sizeof(buffer));
+            close(pipefd[1]);
+            if( strcmp(buffer, "SAFE") != 0){
+                moveFileToDirectory(fullPath, izolarePath);
+                return 1;
+            }
+            //printf(" A AJUNS in process!!!\n");
         }
     }
+    return 0;
 }
 
 
-void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot,const char *izolarePath) {
+void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot,const char *izolarePath, int* nrFisiereMalitioase) {
+
     struct dirent *entry;
 
     while ((entry = readdir(dir)) != NULL) {
@@ -90,7 +111,7 @@ void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot,co
             }
 
             // Apelăm recursiv listDirectoryRecursively pentru subdirector
-            listDirectoryRecursively(subdir, fullPath, snapshot, izolarePath);
+            listDirectoryRecursively(subdir, fullPath, snapshot, izolarePath, nrFisiereMalitioase);
 
             // Închidem subdirectorul
             closedir(subdir);
@@ -99,7 +120,7 @@ void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot,co
 
         // Dacă fișierul nu are permisiuni, executam scriptul de verificare
         if (checkPermissions(fullPath) == 1) {
-            processFile(fullPath, izolarePath);
+            *nrFisiereMalitioase +=processFile(fullPath, izolarePath);
         }
 
         // Construim mesajul pentru snapshot
@@ -125,7 +146,7 @@ void listDirectoryRecursively(DIR *dir, const char *currentPath, int snapshot,co
     }
 }
 
-void createSnapshot(DIR *dir_entry, const char *dir_name, const char *dir_output,const char *dir_izolare, int is_aux) {
+int createSnapshot(DIR *dir_entry, const char *dir_name, const char *dir_output,const char *dir_izolare, int is_aux) {
     struct stat dir_stat;
     if (lstat(dir_name, &dir_stat) != 0) {
         perror("Erare in lstat");
@@ -140,30 +161,49 @@ void createSnapshot(DIR *dir_entry, const char *dir_name, const char *dir_output
         exit(EXIT_FAILURE);
     }
     // Apelăm funcția listDirectoryRecursively pentru a face snapshot-uri
-    listDirectoryRecursively(dir_entry, dir_name, snapshot_file, dir_izolare);
+    int nrFisiereMalitioase =  0;
+    listDirectoryRecursively(dir_entry, dir_name, snapshot_file, dir_izolare, &nrFisiereMalitioase);
     // Închidem fișierul pentru snapshot
     if (close(snapshot_file) == -1) {
         perror("Eroare inchidere snapshot");
     }
+    //printf("Fisiere malitioase Create: %d\n", nrFisiereMalitioase);
+    return nrFisiereMalitioase;
 }
 
+
+
+
 int compareAndClean(const char *old_file, const char *new_file) {
-    char cmd[2048]; // auxiliar pentru crearea de comenzi. acestea se vor rula prim system(cmd) ca si comenzi in schell
+    char cmd[2048];  // auxiliar pentru crearea de comenzi. acestea se vor rula prim system(cmd) ca si comenzi in schell
     //diff - comanda ce verifica daca doua fisiere sunt diferite. /dev/null este o optiune care permite sa ignori " locul unde s-au gasit modificari" si sa primesti doar rezultatul comenzii diff
-    snprintf(cmd, sizeof(cmd), "diff %s %s > /dev/null", old_file, new_file);
-    int diff = system(cmd);
-    if (diff != 0) { // files are different
-        //cp -copiaza continutul din primul fisier in al doilea fisier
+
+    // Verifică dacă fișierul vechi există
+    if (access(old_file, F_OK) != 0) {
+        // Fișierul vechi nu există, deci trebuie să copiem noul fișier
         snprintf(cmd, sizeof(cmd), "cp %s %s", new_file, old_file);
         system(cmd);
-        printf("Snapshot updated.\n");
+        printf("Snapshot created.\n");
     } else {
-        printf("No changes detected.\n");
+        // Ambele fișiere există, compară-le
+        snprintf(cmd, sizeof(cmd), "diff %s %s > /dev/null", old_file, new_file);
+        int diff = system(cmd);
+        if (diff != 0) {
+            // Fișierele sunt diferite, actualizează fișierul vechi
+            snprintf(cmd, sizeof(cmd), "cp %s %s", new_file, old_file);
+            system(cmd);
+            printf("Snapshot updated.\n");
+        } else {
+            printf("No changes detected.\n");
+        }
     }
+
+    //cp -copiaza continutul din primul fisier in al doilea fisier
     //rm - sterge fisierul dat ca parametru
+    // Șterge fișierul nou, deoarece nu mai este necesar
     snprintf(cmd, sizeof(cmd), "rm %s", new_file);
     system(cmd);
-    return diff;
+    return 1;  // Returnează un cod non-zero pentru a indica o actualizare
 }
 
 
@@ -213,6 +253,7 @@ int main(int argc, char** argv) {
 
     struct stat buf;
     pid_t pid;
+    int nrFisiereMalitioase =0;
 
     // Parcurgem directoarele pentru care facem snapshot-uri
     for (int i = 1; i < argc; i ++) {
@@ -243,8 +284,7 @@ int main(int argc, char** argv) {
 
 
 
-
-                createSnapshot(dir_entry, argv[i], argv[poz_dir_output], argv[poz_dir_izolare], 1);
+                nrFisiereMalitioase = createSnapshot(dir_entry, argv[i], argv[poz_dir_output], argv[poz_dir_izolare], 1);
                 char old_snapshot[1024], new_snapshot[1024];
                 sprintf(old_snapshot, "%s/%ld_snapshot.txt", argv[poz_dir_output], (long)buf.st_ino);
                 sprintf(new_snapshot, "%s/%ld_snapshot_aux.txt", argv[poz_dir_output], (long)buf.st_ino);
@@ -255,7 +295,7 @@ int main(int argc, char** argv) {
                     perror("Eroare inchidere director:");
                 } // Închidere directorul curent
 
-                exit(0);
+                exit(nrFisiereMalitioase);
             }
         }
     }
@@ -263,9 +303,16 @@ int main(int argc, char** argv) {
     int status;
     int pid_f;
 
-    for (int  i = 1; i <= argc - 3; i ++) {
+    while(1){
         pid_f = wait(&status);
-        //printf("Child Process %d termineted whit PID %d and a exit code %d\n", i, pid_f, WEXITSTATUS(status));
+        if(pid_f == -1){
+                if( errno != ECHILD){
+                        perror("Eroare la wait");
+                        exit(EXIT_FAILURE);
+                }
+        break;
+        }
+        printf("Child Process termineted whit PID %d and had %d malicious files\n", pid_f, WEXITSTATUS(status));
     }
     return 0;
 }

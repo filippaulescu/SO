@@ -3,7 +3,7 @@
 # Verificare nr de argumente
 if [ $# -lt 1 ]; then
   echo "nr incorect de argumente la executia scriptului"
-  exit -1
+  exit 1
 fi
 
 FISIER_VERIFICAT=$1
@@ -11,10 +11,10 @@ FISIER_VERIFICAT=$1
 # Verificare existenta fisier infectat
 if [ ! -f "$FISIER_VERIFICAT" ]; then
   echo "FISIERUL POSIBIL INFECTAT NU EXISTA"
-  exit -1
+  exit 1
 fi
 
-#adaug drept de citire pt fisierul verificat
+# Adaug drept de citire pt fisierul verificat
 chmod 400 $FISIER_VERIFICAT
 
 # Contorizare linii, cuvinte si caractere
@@ -27,31 +27,18 @@ if [ "$(tail -c 1 "$FISIER_VERIFICAT")" != "" ]; then
   LINII=$((LINII+1))
 fi
 
-echo "$LINII linii"
+# Cautare cuvinte cheie si caractere non-ASCII
+continut_infectat=$(grep -P -io "corrupted|dangerous|risk|attack|malware|malicious|mallicious|[\x80-\xFF]" "$FISIER_VERIFICAT")
 
-#Verificare daca fisierul e suspect
-if (( LINII < 3 )) && (( CUVINTE > 1000)) && (( CARACTERE > 2000 )); then
-    # Cautare cuvinte cheie si caractere non-ASCII
-    continut_infectat=$(grep -P "corrupted|dangerous|risk|attack|malware|malicious|[\x80-\xFF]" "$FISIER_VERIFICAT")
-
-    #sterg drepturile pt fisierul verificat
+# Verifica daca fisierul e suspect prin metrici sau continut
+if [ ! -z "$continut_infectat" ] || (( LINII < 3 && CUVINTE > 1000 && CARACTERE > 2000 )); then
+    echo "Fisierul '$FISIER_VERIFICAT' este suspect."
+    # Sterg drepturile de acces la fisier
     chmod 000 $FISIER_VERIFICAT
-
-    if [ ! -z "$continut_infectat" ]; then
-    # Fisierul contine malware
-        echo "$FISIER_VERIFICAT."
-        exit 1
-        #returnez 1 pentru fisier malitios
-        #sterg drepturile pt fisierul verificat
-        chmod 000 $FISIER_VERIFICAT
-    fi
+    exit 1  # Returnez 1 pentru fisier malitios
 fi
 
- #sterg drepturile pt fisierul verificat
-    chmod 000 $FISIER_VERIFICAT
-
-#Fisierul este curat
+# Daca nu sunt gasite semne de infectare
+chmod 000 $FISIER_VERIFICAT  # Sterg drepturile de acces pentru siguranta
 echo "SAFE"
-
-#returnez 0 pentru fisier curat
-exit 0
+exit 0  # Fisierul este curat
